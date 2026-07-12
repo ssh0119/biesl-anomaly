@@ -52,9 +52,13 @@ def main():
     print(f"stage={args.stage} modality={args.modality} n={len(labels):,}")
     if args.stage == 1:
         pos_probs = probs[:, 1]
+        class_names = ["normal (SR)", "anomaly"]
         print(f"ROC-AUC: {roc_auc_score(labels, pos_probs):.4f}")
         print(f"PR-AUC:  {average_precision_score(labels, pos_probs):.4f}")
-        print(classification_report(labels, preds, target_names=["normal (SR)", "anomaly"], zero_division=0))
+        print(classification_report(labels, preds, target_names=class_names, zero_division=0))
+        print("confusion matrix (rows=true, cols=pred):")
+        print(class_names)
+        print(confusion_matrix(labels, preds, labels=[0, 1]))
     else:
         class_idx = list(range(len(STAGE2_CLASSES)))
         print(classification_report(labels, preds, labels=class_idx, target_names=STAGE2_CLASSES, zero_division=0))
