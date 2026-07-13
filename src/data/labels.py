@@ -4,6 +4,13 @@ Stage 1 (binary): normal sinus rhythm (SR) vs. anything else.
 Stage 2 (multi-class): only runs on Stage-1 anomalies. The dataset's raw
 `event_rhythm` codes are grouped into clinically coherent buckets so that
 very-low-support codes (e.g. JTACH, n~5 total) don't get their own class.
+
+Junctional (JR/JTACH) and ventricular (VTACH) were dropped as Stage 2 classes:
+0.3% and 0.06% of train anomalies respectively, and unlearnable in practice
+(junctional precision 0.01 despite class weighting, ventricular 0% F1 across
+every modality tried — see reports/ecg_only_performance.md). Segments with
+these codes still count as anomalies for Stage 1; Stage 2 just skips them
+(stage2_group_for returns None) instead of forcing a guess.
 """
 
 NORMAL_RHYTHM = "SR"
@@ -27,11 +34,6 @@ RHYTHM_GROUPS = {
     "1AVB": "conduction_block",
     "LBBB": "conduction_block",
     "RBBB": "conduction_block",
-    # junctional rhythms
-    "JR": "junctional",
-    "JTACH": "junctional",
-    # ventricular
-    "VTACH": "ventricular",
 }
 
 STAGE2_CLASSES = sorted(set(RHYTHM_GROUPS.values()))

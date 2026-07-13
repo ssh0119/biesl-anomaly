@@ -16,15 +16,16 @@ def num_classes_for_stage(stage: int) -> int:
     return 2 if stage == 1 else len(STAGE2_CLASSES)
 
 
-def build_model(stage: int, modality: str) -> nn.Module:
+def build_model(stage: int, modality: str, dropout: float | None = None) -> nn.Module:
     assert stage in (1, 2)
     assert modality in ("ecg", "ppg", "both")
     backbone_cls = STAGE_BACKBONES[stage]
     num_classes = num_classes_for_stage(stage)
+    kwargs = {} if dropout is None else {"dropout": dropout}
 
     if modality in ("ecg", "ppg"):
-        return backbone_cls(in_channels=1, num_classes=num_classes)
+        return backbone_cls(in_channels=1, num_classes=num_classes, **kwargs)
 
-    ecg_encoder = backbone_cls(in_channels=1, num_classes=num_classes)
-    ppg_encoder = backbone_cls(in_channels=1, num_classes=num_classes)
+    ecg_encoder = backbone_cls(in_channels=1, num_classes=num_classes, **kwargs)
+    ppg_encoder = backbone_cls(in_channels=1, num_classes=num_classes, **kwargs)
     return LateFusionModel(ecg_encoder, ppg_encoder, num_classes=num_classes)

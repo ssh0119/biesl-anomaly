@@ -40,6 +40,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--dropout", type=float, default=None)
+    parser.add_argument("--warmup-pct", type=float, default=0.1, help="fraction of total steps spent warming up to --lr")
+    parser.add_argument("--eval-every-steps", type=int, default=None, help="also run validation every N steps, not just at epoch end (diagnostic)")
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--limit", type=int, default=None, help="subsample N rows per split (for smoke tests)")
     args = parser.parse_args()
@@ -59,23 +63,28 @@ def main():
         pin_memory=True, persistent_workers=args.num_workers > 0,
     )
 
-    model = build_model(args.stage, args.modality).to(device)
+    model = build_model(args.stage, args.modality, dropout=args.dropout).to(device)
     num_classes = num_classes_for_stage(args.stage)
 
     label_col = "stage1_label" if args.stage == 1 else "stage2_idx"
     class_weights = compute_class_weights(train_ds.df[label_col].to_numpy(), num_classes).to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=args.lr, total_steps=args.epochs * len(train_loader), pct_start=args.warmup_pct,
+    )
 
     config.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     ckpt_path = config.CHECKPOINT_DIR / f"stage{args.stage}_{args.modality}.pt"
     best_f1 = -1.0
+    global_step = 0
 
     for epoch in range(1, args.epochs + 1):
         model.train()
         t0 = time.time()
         running_loss = 0.0
         for step, (inputs, labels) in enumerate(train_loader, 1):
+            global_step += 1
             inputs = to_device(inputs, device)
             labels = labels.to(device, non_blocking=True)
 
@@ -85,10 +94,20 @@ def main():
                 loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             running_loss += loss.item()
             if step % 50 == 0:
-                print(f"epoch {epoch} step {step}/{len(train_loader)} loss={running_loss / step:.4f}")
+                print(f"epoch {epoch} step {step}/{len(train_loader)} loss={running_loss / step:.4f} lr={scheduler.get_last_lr()[0]:.2e}")
+
+            if args.eval_every_steps and global_step % args.eval_every_steps == 0:
+                mid_f1 = evaluate(model, val_loader, device, autocast_dtype)
+                model.train()
+                print(f"  [mid-epoch] global_step={global_step} (epoch {epoch} step {step}/{len(train_loader)}) val_macro_f1={mid_f1:.4f}")
+                if mid_f1 > best_f1:
+                    best_f1 = mid_f1
+                    torch.save({"model": model.state_dict(), "args": vars(args)}, ckpt_path)
+                    print(f"    saved new best checkpoint -> {ckpt_path}")
 
         val_f1 = evaluate(model, val_loader, device, autocast_dtype)
         dt = time.time() - t0

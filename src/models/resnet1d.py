@@ -35,6 +35,7 @@ class ResNet1D(nn.Module):
         num_classes: int = 2,
         base_channels: int = 64,
         blocks_per_stage: tuple[int, ...] = (2, 2, 2, 2),
+        dropout: float = 0.3,
     ):
         super().__init__()
         self.stem = nn.Sequential(
@@ -57,6 +58,7 @@ class ResNet1D(nn.Module):
 
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.embedding_dim = in_ch
+        self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(in_ch, num_classes)
 
     def forward_features(self, x):
@@ -65,4 +67,4 @@ class ResNet1D(nn.Module):
         return self.pool(x).squeeze(-1)
 
     def forward(self, x):
-        return self.classifier(self.forward_features(x))
+        return self.classifier(self.dropout(self.forward_features(x)))
