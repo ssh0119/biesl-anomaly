@@ -17,11 +17,26 @@
 
 ### `main.py`
 
+**파일 역할:** 프로젝트 생성 시 만들어진 최소 실행 예제다. 실제 데이터 전처리, model 학습과 평가에는 연결되지 않는다.
+
+**함수·구문의 의미**
+
+- `main()`: 인자를 받지 않고 고정된 인사 문구만 출력한다. 현재 연구 파이프라인의 진입 함수가 아니라 scaffold가 정상 실행되는지 보여 주는 placeholder다.
+- `if __name__ == "__main__"`: 다른 파일에서 import할 때는 실행하지 않고 `python main.py`로 직접 실행했을 때만 `main()`을 호출하게 하는 Python 표준 진입 조건이다.
+
+**줄별 코드 설명**
+
 - 1: 패키지와 무관한 예제용 `main` 함수를 선언한다.
 - 2: `Hello from biesl-anomaly!`만 출력한다. 실제 학습 파이프라인 진입점이 아니다.
 - 5–6: 파일을 직접 실행할 때만 위 함수를 부른다.
 
 ### `src/config.py`
+
+**파일 역할:** 데이터·cache·checkpoint 경로와 sampling 조건, 사용할 채널, train/validation/test fold를 중앙에서 정의한다. 다른 모듈이 동일한 실험 설정을 공유하도록 하는 구성 파일이다.
+
+**함수·클래스의 의미:** 함수와 클래스는 없다. 다른 파일은 이 모듈을 import하고 `config.DATA_ROOT`, `config.SEGMENT_LEN`처럼 상수를 읽는다. 이 값이 바뀌면 데이터 위치, 입력 길이 또는 split 등 여러 단계의 동작이 함께 바뀐다.
+
+**줄별 코드 설명**
 
 - 1: 운영체제 독립 경로 처리를 위해 `Path`를 가져온다.
 - 3: `src`의 부모, 즉 저장소 루트를 계산한다.
@@ -34,6 +49,15 @@
 - 21: 허용 센서 입력을 ECG, PPG, 둘 다로 제한한다.
 
 ### `src/utils.py`
+
+**파일 역할:** 학습과 평가 양쪽에서 공통으로 필요한 device 이동과 class imbalance 보정 기능을 모아 둔다.
+
+**함수의 의미**
+
+- `to_device(inputs, device)`: model 입력을 CPU에서 GPU 등 지정 device로 옮긴다. 단일 tensor뿐 아니라 late fusion이 사용하는 `{"ecg": tensor, "ppg": tensor}` 구조도 동일하게 처리한다. 입력과 같은 자료구조를 반환하되 내부 tensor의 device만 달라진다.
+- `compute_class_weights(labels, num_classes)`: class별 표본 수의 역수로 loss 가중치를 만들고 평균이 1이 되도록 맞춘다. 희귀 class의 오분류가 loss에 더 크게 반영되게 하며, `CrossEntropyLoss(weight=...)`에 넣을 `float32` tensor를 반환한다.
+
+**줄별 코드 설명**
 
 - 1–2: class weight 계산용 NumPy와 tensor/device 처리용 PyTorch를 가져온다.
 - 5: 단일 tensor 또는 dictionary 입력을 device로 옮기는 함수를 선언한다.
@@ -48,6 +72,15 @@
 - 17: PyTorch `float32` tensor로 반환한다.
 
 ### `src/data/build_index.py`
+
+**파일 역할:** 큰 원본 `metadata.csv`와 로컬 WFDB 디렉터리를 대조해 실제 사용 가능한 행만 남기고, 두 단계 학습에 필요한 label을 붙여 `cache/index.parquet`으로 저장한다. 반복 학습 때마다 원본 CSV 전체를 다시 처리하지 않게 하는 사전 인덱싱 단계다.
+
+**함수의 의미**
+
+- `existing_patients() -> set[str]`: `DATA_ROOT/p??/<patient>` 디렉터리를 탐색한다. 입력 인자는 없으며, 현재 디스크에 존재하는 환자 디렉터리 이름들의 집합을 반환한다. metadata에는 존재하지만 신호가 다운로드되지 않은 환자를 제거하는 데 쓰인다.
+- `main() -> None`: 인덱스 생성 작업의 진입 함수다. cache 디렉터리 생성 → 로컬 환자 조회 → CSV chunk 로딩 → 파생 열 생성 → Parquet 저장 → 분포 출력 순서로 전체 작업을 조정한다. 반환값은 없고 파일 생성과 console 출력이 부수 효과다.
+
+**줄별 코드 설명**
 
 - 1–6: 이 모듈의 목적, 파생 열, 실행 명령을 설명하는 docstring이다.
 - 8–9: import 경로 조작을 위한 `sys`, `Path`를 가져온다.
@@ -82,6 +115,17 @@
 
 ### `src/data/labels.py`
 
+**파일 역할:** 원본 `event_rhythm` 코드를 Stage 1 정상/이상 label과 Stage 2의 네 rhythm 그룹으로 해석하기 위한 taxonomy를 정의한다. 어떤 원시 코드를 같은 class로 묶거나 제외할지를 결정하므로 연구 결과의 임상적 의미와 class 분포에 직접 영향을 준다.
+
+**함수·상수의 의미**
+
+- `stage2_group_for(event_rhythm) -> str | None`: 원시 rhythm 코드 하나를 받아 `sinus_rate`, `atrial_tachy`, `paced`, `conduction_block` 중 하나를 반환한다. `SR`, 제외한 희귀 rhythm 또는 알 수 없는 코드는 `None`을 반환한다.
+- `RHYTHM_GROUPS`: 함수가 조회하는 원시 코드 → 그룹명 mapping이다.
+- `STAGE2_CLASSES`: mapping에 실제로 존재하는 그룹명을 정렬한 최종 class 목록이다. 이 순서가 평가 보고서와 model 출력 index의 기준이 된다.
+- `STAGE2_CLASS_TO_IDX`: 문자열 그룹명을 cross-entropy 학습에 필요한 0부터 시작하는 정수 index로 바꾼다.
+
+**줄별 코드 설명**
+
 - 1–14: 두 단계 레이블 정책과 희귀 클래스를 제외한 실험적 이유를 설명한다.
 - 16: 정상 rhythm 원시 코드를 `SR`로 정의한다.
 - 18: 다음 dictionary의 방향을 설명한다.
@@ -93,6 +137,15 @@
 - 45: dictionary 조회 결과를 반환한다.
 
 ### `src/data/wfdb_signals.py`
+
+**파일 역할:** WFDB record를 실제 NumPy waveform으로 읽고, model 입력에 맞는 고정 길이와 자료형으로 보정한 뒤 segment별 정규화를 제공한다. 디스크의 의료 신호 형식과 PyTorch Dataset 사이의 경계다.
+
+**함수의 의미**
+
+- `load_channels(folder_path, channels) -> dict[str, np.ndarray]`: metadata의 상대 record 경로와 필요한 채널명 목록을 받는다. WFDB record에서 각 채널을 찾아 길이를 3,750 sample로 자르거나 0-padding하고 `{채널명: float32 배열}`로 반환한다. 요청 채널이 없으면 `ValueError`를 발생시킨다.
+- `normalize(x) -> np.ndarray`: 한 segment의 유효 sample만으로 평균·표준편차를 계산해 z-score 정규화한다. NaN/Inf 위치는 정규화 평균인 0으로 치환하며, 결과는 원 shape의 `float32` 배열이다.
+
+**줄별 코드 설명**
 
 - 1–4: NumPy, WFDB와 전역 설정을 가져온다.
 - 7: 한 record에서 요청 채널들을 읽는 함수를 선언한다.
@@ -123,6 +176,23 @@
 - 38: `float32`로 반환한다.
 
 ### `src/data/dataset.py`
+
+**파일 역할:** Parquet 인덱스에서 요청한 split, modality와 cascade stage에 맞는 행을 고르고, 해당 WFDB 신호를 필요할 때 읽어 PyTorch `(inputs, label)` 표본으로 제공한다.
+
+**함수·클래스의 의미**
+
+- `_load_full_index() -> pd.DataFrame`: index Parquet을 최초 한 번만 읽고 module 전역 cache에 보관한다. 이후 Dataset 생성은 같은 DataFrame을 재사용한다.
+- `_folds_for_split(split) -> tuple[int, ...]`: `train`, `val`, `test` 문자열을 설정 파일의 fold tuple로 바꾼다.
+- `_WFDBDataset(Dataset)`: 두 stage Dataset이 공유하는 신호 로딩 base class다. 이름 앞의 `_`는 이 모듈 내부 구현용이라는 관례다.
+  - `__init__(df, modality, label_col)`: 이미 필터된 DataFrame과 사용할 modality·정답 열을 저장하고 실제 채널 목록을 결정한다.
+  - `__len__() -> int`: DataLoader가 사용할 전체 표본 수를 반환한다.
+  - `_build_inputs(folder_path)`: WFDB 신호를 읽고 정규화한다. 단일 modality이면 `(1, 3750)` tensor, `both`이면 ECG/PPG tensor dictionary를 반환한다.
+  - `__getitem__(idx)`: 한 index의 입력과 `long` label을 반환한다. 현재는 로딩 오류 시 다른 무작위 행으로 바꾸어 재시도한다.
+- `_maybe_limit(df, limit, seed=0) -> pd.DataFrame`: 빠른 실험을 위해 DataFrame을 고정 seed로 최대 `limit`행까지 줄인다.
+- `Stage1Dataset`: 지정 split에서 정상 `SR` 대 기타 rhythm의 이진 label을 제공한다. ECG가 필요한 경우 `has_ecg` 행만 사용한다.
+- `Stage2Dataset`: ground-truth anomaly 중 네 taxonomy 그룹에 속한 행만 남기고 문자열 그룹을 정수 `stage2_idx`로 바꾼다.
+
+**줄별 코드 설명**
 
 - 1–9: 재시도 표본 추출, DataFrame, PyTorch Dataset, 설정·레이블·신호 함수를 가져온다.
 - 11: 프로세스별 인덱스 DataFrame cache다.
@@ -181,6 +251,20 @@
 
 ### `src/models/resnet1d.py`
 
+**파일 역할:** 이미지용 ResNet의 residual learning 구조를 1차원 ECG/PPG 신호에 맞게 구현한 Stage 1 backbone이다. 모든 30초 segment를 정상/이상으로 빠르게 screening한다.
+
+**클래스·함수의 의미**
+
+- `BasicBlock1D(nn.Module)`: 1D convolution 두 개로 특징을 변환한 뒤 원 입력을 더하는 residual block이다.
+  - `__init__(in_ch, out_ch, stride=1)`: main convolution 경로를 만들고, 채널 수나 시간 길이가 바뀔 때 identity shape을 맞출 1×1 downsample 경로를 추가한다.
+  - `forward(x)`: main 경로의 변환 결과와 identity를 더해 ReLU를 적용한다. 입력은 `(batch, channel, time)`이고 같은 batch와 호환되는 출력 feature map을 반환한다.
+- `ResNet1D(nn.Module)`: stem, 네 residual stage, global average pooling, dropout과 classifier를 결합한 전체 분류 model이다.
+  - `__init__(...)`: 입력 채널·class 수·기본 폭·stage별 block 수·dropout을 받아 network를 조립한다.
+  - `forward_features(x)`: classifier 이전의 `(batch, embedding_dim)` feature를 반환한다. 단일 model의 분류와 fusion branch가 공유하는 표현이다.
+  - `forward(x)`: feature에 dropout과 linear classifier를 적용해 `(batch, num_classes)` logits를 반환한다.
+
+**줄별 코드 설명**
+
 - 1: PyTorch neural-network layer API를 가져온다.
 - 4: 1D residual basic block을 정의한다.
 - 5–6: 입력/출력 채널과 stride를 받고 parent module을 초기화한다.
@@ -217,6 +301,23 @@
 
 ### `src/models/cnn_transformer.py`
 
+**파일 역할:** convolution으로 국소 waveform 형태를 token sequence로 줄이고 Transformer self-attention으로 시간에 따른 rhythm 패턴을 통합하는 Stage 2 backbone이다.
+
+**클래스·함수의 의미**
+
+- `ConvPatchEmbed(nn.Module)`: 긴 raw 신호를 Transformer가 처리할 짧은 local feature token들로 변환한다.
+  - `__init__(in_channels=1, d_model=128)`: stride 2 convolution 세 층을 만들어 시간 길이를 약 1/8로 줄이고 feature 폭을 `d_model`로 늘린다.
+  - `forward(x)`: `(B, C, L)` waveform을 `(B, L', d_model)` token sequence로 반환한다.
+- `PositionalEncoding(nn.Module)`: 순서 개념이 없는 attention에 각 token의 시간적 위치를 알려 주는 고정 sine/cosine encoding이다.
+  - `__init__(d_model, max_len=2000)`: 최대 sequence 길이의 위치 table을 미리 계산하고 학습 대상이 아닌 buffer로 등록한다.
+  - `forward(x)`: 입력 길이에 해당하는 위치값을 token에 더해 같은 shape으로 반환한다.
+- `CNNTransformer(nn.Module)`: patch embedding, 학습 가능한 CLS token, positional encoding, Transformer encoder와 classifier를 합친 전체 rhythm classifier다.
+  - `__init__(...)`: embedding 폭, head 수, encoder 층 수, feed-forward 폭, dropout과 class 수를 받아 model을 구성한다.
+  - `forward_features(x)`: 전체 token을 encoder에 통과시키고 CLS 위치의 `(B, d_model)` 표현을 반환한다.
+  - `forward(x)`: CLS 표현을 linear classifier에 넣어 `(B, num_classes)` logits를 반환한다.
+
+**줄별 코드 설명**
+
 - 1–4: positional encoding 수학, tensor, neural layer API를 가져온다.
 - 7–8: raw waveform을 token sequence로 바꾸는 convolution front-end다.
 - 10–11: 입력 채널과 embedding 폭을 받고 module을 초기화한다.
@@ -252,6 +353,16 @@
 
 ### `src/models/fusion.py`
 
+**파일 역할:** ECG와 PPG를 별도 encoder로 처리하고 두 embedding을 합쳐 분류하는 late-fusion 구조를 정의한다. 센서별 waveform 특징은 따로 학습하고 최종 의미 표현에서 결합한다.
+
+**클래스·함수의 의미**
+
+- `LateFusionModel(nn.Module)`: ECG/PPG backbone 두 개와 fusion MLP head를 감싸는 multi-modal model이다.
+  - `__init__(ecg_encoder, ppg_encoder, num_classes, hidden_dim=128, dropout=0.2)`: 두 encoder를 submodule로 등록하고, 두 `embedding_dim`의 합을 입력받는 hidden linear layer와 최종 classifier를 만든다.
+  - `forward(inputs)`: `inputs["ecg"]`와 `inputs["ppg"]`를 각각 `forward_features`에 넣고, 두 feature를 연결해 `(batch, num_classes)` logits를 반환한다.
+
+**줄별 코드 설명**
+
 - 1–2: tensor 연결과 neural layer API를 가져온다.
 - 5–11: ECG/PPG 별도 인코더 feature를 합치는 late-fusion 의도를 설명한다.
 - 13: 두 encoder, 클래스 수, head 폭/dropout을 받는다.
@@ -264,6 +375,16 @@
 - 29: fusion head가 class logits를 만든다.
 
 ### `src/models/factory.py`
+
+**파일 역할:** stage와 modality 설정만 받아 올바른 backbone과 fusion wrapper를 만들어 주는 model factory다. 학습·평가 코드가 구체적인 class 조립 방식을 중복하지 않게 한다.
+
+**함수·상수의 의미**
+
+- `STAGE_BACKBONES`: Stage 1을 `ResNet1D`, Stage 2를 `CNNTransformer` class에 연결하는 registry다.
+- `num_classes_for_stage(stage) -> int`: Stage 1이면 2, Stage 2이면 현재 taxonomy의 그룹 수를 반환해 model 출력 차원을 정한다.
+- `build_model(stage, modality, dropout=None) -> nn.Module`: 단일 modality이면 1-channel backbone 하나를 반환한다. `both`이면 ECG/PPG backbone을 각각 만들고 `LateFusionModel`로 감싸 반환한다.
+
+**줄별 코드 설명**
 
 - 1–6: module type, Stage 2 클래스 목록과 세 model 구현을 가져온다.
 - 8–11: 단계별 backbone 선택 이유를 서술한다.
@@ -280,6 +401,16 @@
 - 31: 두 backbone을 late-fusion wrapper에 넣는다.
 
 ### `src/train.py`
+
+**파일 역할:** command-line 인자로 stage와 modality·hyperparameter를 받아 Dataset, DataLoader, model, loss, optimizer와 scheduler를 구성하고 학습한다. validation macro-F1이 가장 높은 model과 마지막 model을 checkpoint로 저장하는 학습 진입점이다.
+
+**함수의 의미**
+
+- `build_datasets(stage, modality, limit)`: stage에 맞는 Dataset class를 선택해 train/validation Dataset 두 개를 반환한다. smoke-test limit이 있으면 train과 더 작은 validation subset에 적용한다.
+- `evaluate(model, loader, device, autocast_dtype)`: 학습 중 validation 전용 평가 함수다. gradient를 끄고 전체 loader의 class 예측과 정답을 모아 macro-F1 scalar를 반환한다. best checkpoint 선택 기준으로 사용한다.
+- `main()`: CLI parsing → device 선택 → loader/model/loss/optimizer/scheduler 생성 → batch 학습 → 선택적 중간 검증 → epoch 검증 → checkpoint 저장까지 전체 training loop를 실행한다. 반환값 대신 checkpoint 파일과 console log를 만든다.
+
+**줄별 코드 설명**
 
 - 1–11: CLI/time, PyTorch, macro-F1, DataLoader와 프로젝트 구성요소를 가져온다.
 - 14: 단계에 맞는 train/validation dataset을 만드는 helper다.
@@ -348,6 +479,15 @@
 
 ### `src/evaluate.py`
 
+**파일 역할:** 저장한 best checkpoint를 test fold에 적용해 최종 성능 지표와 confusion matrix를 출력한다. 학습 중 model 선택용 validation 함수와 달리 논문 결과 산출을 위한 test 평가 진입점이다.
+
+**함수의 의미**
+
+- `collect_predictions(model, loader, device)`: gradient 없이 모든 test batch를 순회한다. logits를 softmax class 확률로 바꾸어 `probs` 행렬과 `labels` 배열을 반환한다.
+- `main()`: CLI 조건으로 test Dataset과 model 구조를 만들고 checkpoint weight를 로드한다. Stage 1이면 ROC-AUC·PR-AUC·이진 보고서를, Stage 2이면 네 class classification report를 confusion matrix와 함께 출력한다.
+
+**줄별 코드 설명**
+
 - 1–12: CLI, PyTorch softmax, sklearn metric, DataLoader와 프로젝트 구성요소를 가져온다.
 - 15: prediction 수집 중 gradient 기록을 끈다.
 - 16: model과 loader로 확률·정답을 모으는 함수다.
@@ -384,6 +524,12 @@
 - 70–71: 직접 실행할 때 `main`을 호출한다.
 
 ### 빈 package 파일
+
+**파일 역할:** `src`, `src.data`, `src.models` 디렉터리를 Python package로 명확하게 표시한다. 세 파일은 모두 비어 있다.
+
+**함수·클래스의 의미:** 정의된 함수나 클래스가 없으며 runtime 동작도 없다. 패키지 인식과 향후 package-level export 위치로만 존재한다.
+
+**줄별 코드 설명:** 0줄이므로 설명할 실행문이 없다.
 
 - `src/__init__.py`, `src/data/__init__.py`, `src/models/__init__.py`: 모두 0줄이다. 디렉터리를 Python package로 명확히 표시할 뿐 실행 로직은 없다.
 
